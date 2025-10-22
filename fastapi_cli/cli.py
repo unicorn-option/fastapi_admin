@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from pathlib import Path
 
 # 镜像映射表
@@ -124,7 +126,7 @@ class ProjectCreator:
                             '__init__.py': '',
                             'views.py': self.get_user_views_py_template(),
                             'models.py': self.get_user_models_py_template(),
-                            'data_pydantic.py': self.get_user_data_pydantic_template(),
+                            'data_pydantic.py': self.get_user_data_pydantic_py_template(),
                         }
                     },
                     'utils': {
@@ -263,6 +265,7 @@ $ git push -u origin main
     def get_requirements_template(self):
         """requirements.txt 模板"""
         return """aerich~=0.6.0
+redis~=5.2
 cryptography~=43.0.0
 fastapi[all]~=0.112.0
 paramiko~=3.5.0
@@ -290,7 +293,7 @@ deb-src https://mirrors.aliyun.com/debian/ bullseye-backports main non-free cont
         return """from contextlib import asynccontextmanager
 from urllib.parse import quote
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 from fastapi.exceptions import (
     HTTPException,
     RequestValidationError,
@@ -298,7 +301,6 @@ from fastapi.exceptions import (
 from starlette import status
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import RedirectResponse
 
 from src.app.api.user_module.views import user_router
 from src.app.core.config import (
@@ -467,9 +469,8 @@ async def do_stuff():
     """
 
     def get_user_views_py_template(self):
-        """views.py 模板"""
+        """user_module/views.py 模板"""
         return '''import hashlib
-import json
 import logging
 import time
 import traceback
@@ -478,13 +479,10 @@ from urllib.parse import quote
 
 import jwt
 import ujson
-from fastapi import Query
 from fastapi.routing import APIRouter
 from jwt import ExpiredSignatureError
 from starlette import status
 from starlette.exceptions import HTTPException
-from starlette.responses import RedirectResponse
-from tortoise.transactions import in_transaction
 
 from src.app.api.user_module.data_pydantic import (
     BaseUserItem,
@@ -507,8 +505,8 @@ from src.app.utils.db_tools import (
 )
 from src.app.utils.hash_tools import create_hash_summary
 from src.app.utils.rsa_tools import (
-    TDM_PRIVATE_KEY,
-    TDM_PUBLIC_KEY,
+    YOUR_PRIVATE_KEY,
+    YOUR_PUBLIC_KEY,
     decryption_message,
     encryption_message,
 )
@@ -541,7 +539,7 @@ async def user_register(item: BaseUserItem):
         await user.save()
         # 基于用户 id 生成激活链接并存 redis
         message = ujson.dumps({'uid': user.id, 'phone': user.phone})
-        activation_token = encryption_message(message, TDM_PUBLIC_KEY)
+        activation_token = encryption_message(message, YOUR_PUBLIC_KEY)
         pool = DatabasePool()
         redis_client = pool.redis_db_dict[settings.REDIS_CONFIG['db_name']]
         key = f'{activation_token_prefix}{activation_token}'
@@ -571,7 +569,7 @@ async def user_activation(item: UserActivationItem):
             headers={'WWW-Authenticate': 'Bearer'},
         )
 
-    message = decryption_message(item.activation_token, TDM_PRIVATE_KEY)
+    message = decryption_message(item.activation_token, YOUR_PRIVATE_KEY)
     data = ujson.loads(message)
 
     if not data.get('phone') or 'uid' not in data or redis_phone != data['phone']:
@@ -623,7 +621,7 @@ async def user_authentication_token(item: UserAuthenticationItem):
         return {'msg': '用户未激活, 请先激活'}
 
     # 解密 secret_msg
-    message = decryption_message(item.secret_msg, TDM_PRIVATE_KEY)
+    message = decryption_message(item.secret_msg, YOUR_PRIVATE_KEY)
     data = ujson.loads(message)
 
     if not data.get('auth_code') or not data.get('timestamp'):
@@ -709,8 +707,18 @@ async def check_refresh_token_get_new_token(item: RefreshTokenItem):
 
         '''
 
+    def get_init_subapp_views_py_templdate(self):
+        """初始化子应用的 viuews.py 模板"""
+        return """import logging
+
+from fastapi.routing import APIRouter
+
+logger = logging.getLogger(__name__)
+
+        """
+
     def get_user_models_py_template(self):
-        """models.py 模板"""
+        """user_module/models.py 模板"""
         return """import time
 
 from tortoise import Model, fields
@@ -742,8 +750,14 @@ class Users(Model):
 
         """
 
-    def get_user_data_pydantic_template(self):
-        """data_pydantic.py 模板"""
+    def get_init_subapp_modesl_py_templdate(self):
+        """初始化子应用的 models.py 模板"""
+        return """from tortoise import Model, fields
+
+        """
+
+    def get_user_data_pydantic_py_template(self):
+        """user_module/data_pydantic.py 模板"""
         return """from pydantic import BaseModel
 
 
@@ -761,6 +775,12 @@ class UserAuthenticationItem(BaseUserItem):
 
 class RefreshTokenItem(BaseModel):
     refresh_token: str
+
+        """
+
+    def get_init_subapp_data_pydantic_py_template(self):
+        """初始化子应用的 data_pydantic.py 模板"""
+        return """from pydantic import BaseModel
 
         """
 
@@ -1433,11 +1453,27 @@ class TimerMiddleware(BaseHTTPMiddleware):
         new_config = []
         db_config = []
         yaml_config = []
+
+        for db in databases:
+            if db in DB_CONFIG_TEMPLATES:
+                db_config.append(DB_CONFIG_TEMPLATES[db]['config'])
+                yaml_config.append(DB_CONFIG_TEMPLATES[db]['yaml_template'])
+
+        # 在适当位置插入数据库配置
+        for line in config_lines:
+            new_config.append(line)
+            if 'pg_configs = config.get(' in line and 'postgres' not in databases:
+                # 移除默认的PostgreSQL 配置
+                continue
+            if '# 数据库配置' in line:
+                # 插入新的数据库配置
+                new_config.extend(db_config)
+
         return '\n'.join(new_config)
 
     def _generate_readme_with_database(self, base_readme, databases):
         """生成包含指定数据库配置的 README"""
-        yaml_templdate = """
+        yaml_template = """
 app:
   host: 0.0.0.0
   port: 8000
@@ -1447,13 +1483,141 @@ app:
 
         for db in databases:
             if db in DB_CONFIG_TEMPLATES:
-                yaml_templdate += DB_CONFIG_TEMPLATES[db]['yaml_template']
+                yaml_template += DB_CONFIG_TEMPLATES[db]['yaml_template']
 
         # 替换 README 中的 YAML 配置身份
-        readme_line = base_readme.split('\n')
+        readme_lines = base_readme.split('\n')
         new_readme = []
         in_yaml_section = False
+
+        for line in readme_lines:
+            if '```YAML' in line.upper():
+                in_yaml_section = True
+                new_readme.append(line)
+                new_readme.extend(yaml_template.strip().split('\n'))
+            elif '```' in line and in_yaml_section:
+                in_yaml_section = False
+                new_readme.append(line)
+            elif not in_yaml_section:
+                new_readme.append(line)
+
         return '\n'.join(new_readme)
 
     def _update_config_with_databases(self, project_path, databases):
-        pass
+        """配置文件中的数据库配置"""
+        config_file = project_path / 'src' / 'app' / 'core' / 'config.py'
+        if config_file.exists():
+            with open(config_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # 更新 TORTOISE_ORM 配置
+            tortoise_orm_start = content.find('TORTOISE_ORM = {')
+            if tortoise_orm_start != 1:
+                models = ["'aerich.models'"]
+                if 'postgres' in databases or 'mysql' in databases or 'sqlite' in databases:
+                    models.insert(0, "'src.app.api.user_modules.models'")
+
+                models_str = ',\n                    '.join(models)
+
+                # 替换 models 部分
+                new_tortoise_orm = f'''TORTOISE_ORM = {{
+        "connections": {{
+            "default": DATABASES.get("default", MYSQL_DATABASES.get("default", SQLITE_DATABASES.get("default")))
+        }},
+        "apps": {{
+            "models": {{
+                "models": [
+                    {models_str},
+                ],
+                "default_connection": "default",
+            }}
+        }}
+    }}
+'''
+
+                # 找到并替换 TORTOISE_ORM 部分
+                tortoise_orm_end = content.find('}', tortoise_orm_start) + 1
+                content = content[:tortoise_orm_start] + new_tortoise_orm + content[tortoise_orm_end:]
+
+            with open(config_file, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+    def create_virtualenv(self, env_path):
+        """创建虚拟环境"""
+        try:
+            env_path = Path(env_path)
+            print(f'正在创建虚拟环境: {env_path}')
+
+            import venv
+            builder = venv.EnvBuilder(with_pip=True)
+            builder.create(env_path)
+
+            print(f'✅ 虚拟环境创建成功: {env_path}')
+            return True
+        except Exception as e:
+            print(f'❌ 创建虚拟环境失败: {e}')
+            return False
+
+    def install_dependencies(self, project_path, env_path=None, mirror=None):
+        """安装项目依赖"""
+        requirements_file = project_path / 'requirements.txt'
+
+        if not requirements_file.exists():
+            print('❌ 未找到 requirements.txt 文件')
+            return False
+
+        pip_cmd = [sys.executable, '-m', 'pip', 'install', '-r', str(requirements_file)]
+
+        if mirror:
+            mirror_url = MIRROR_MAP.get(mirror, mirror)
+            pip_cmd.extend(['-i', mirror_url])
+            print(f'使用镜像: {mirror_url}')
+
+        if env_path:
+            # 在虚拟环境中安装
+            if sys.platform == 'win32':
+                pip_path = Path(env_path) / 'Scripts' / 'pip.exe'
+                python_path = Path(env_path) / 'Scripts' / 'python.exe'
+            else:
+                pip_path = Path(env_path) / 'bin' / 'pip'
+                python_path = Path(env_path) / 'bin' / 'python'
+
+            if pip_path.exists():
+                pip_cmd[:3] = str(pip_path)
+            else:
+                pip_cmd[0] = str(python_path)
+
+        print(f'正在安装依赖...')
+        try:
+            result = subprocess.run(pip_cmd, check=True, capture_output=True)
+            print('✅ 依赖安装成功')
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f'❌ 依赖安装失败: {e}')
+            print(f'错误输出: {e.stderr}')
+            return False
+
+    def create_app(self, project_name, app_name):
+        """创建新的应用"""
+        project_path = Path(project_name)
+        if not project_path.exists():
+            print(f'❌ 项目:「{project_name}」不存在')
+            return False
+
+        app_structure = {
+            '__init__.py': '',
+            'views.py': self.get_init_subapp_views_py_templdate(),
+            'models.py': self.get_init_subapp_modesl_py_templdate(),
+            'data_pydantic.py': self.get_init_subapp_data_pydantic_py_template(),
+        }
+
+        app_path = project_path / 'src' / 'app' / 'api' / app_name
+        app_path.mkdir(parents=True, exist_ok=True)
+
+        for filename, content in app_structure.items():
+            file_path = app_path / filename
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+
+        print(f'✅ 应用模块 「{app_name}」创建成功')
+        return True
