@@ -1,3 +1,4 @@
+import argparse
 import subprocess
 import sys
 from pathlib import Path
@@ -1621,3 +1622,77 @@ app:
 
         print(f'✅ 应用模块 「{app_name}」创建成功')
         return True
+
+
+def _handle_create_project(creator, args):
+    """处理创建项目命令"""
+    # 处理数据库参数
+    databases = []
+    if args.databases:
+        databases = [db.strip() for db in args.databases.split(',')]
+        # 验证数据库类型
+        valid_dbs = [db for db in databases if db in DB_CONFIG_TEMPLATES]
+        if len(valid_dbs) != len(databases):
+            invalid_dbs = set(databases) - set(valid_dbs)
+            print(f"警告: 忽略不支持的数据库类型: {', '.join(invalid_dbs)}")
+        databases = valid_dbs
+    else:
+        responses = input()
+
+    # 创建项目
+    project_path = creator.create_project(args.name, databases)
+    if not project_path:
+        return
+
+
+def _handle_create_app(creator, args):
+    """处理创建应用命令"""
+    creator.create_app(args.project_name, args.app_name)
+
+
+def main():
+    """主函数"""
+    parser = argparse.ArgumentParser(
+        description="FastAPI 项目脚手架工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f'''
+示例:
+  %(prog)s create-project -n my_project
+  %(prog)s create-project -n my_project -e -i tuna -d postgres,redis
+  %(prog)s create-app my_project product_module
+
+支持的数据库: {', '.join(DB_CONFIG_TEMPLATES.keys())}
+支持的镜像源: {', '.join(MIRROR_MAP.keys())}
+'''
+    )
+
+    subparsers = parser.add_subparsers(dest='command', help='可用命令')
+
+    # create-project 命令
+    create_parser = subparsers.add_parser('create-project', help='创建新项目')
+    create_parser.add_argument('-n', '--name', required=True, help='项目名称')
+    create_parser.add_argument('-e', '--env', nargs='?', const=True, help='创建虚拟环境 (可选路径)')
+    create_parser.add_argument('-i', '--install', nargs='?', const='default', help='安装以来并指定镜像')
+    create_parser.add_argument('-d', '--databases', help=f'指定数据库配置 (逗号分开: {', '.join(DB_CONFIG_TEMPLATES.keys())})')
+
+    # create-app 命令
+    app_parser = subparsers.add_parser('create-app', help='创建新应用模块')
+    app_parser.add_argument('project_name', help='项目名称')
+    app_parser.add_argument('app_name', help='应用模块名称')
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    creator = ProjectCreator()
+
+    if args.command == 'create-project':
+        _handle_create_project(creator, args)
+    elif args.command == 'create-app':
+        _handle_create_app(creator, args)
+
+
+if __name__ == '__main__':
+    main()

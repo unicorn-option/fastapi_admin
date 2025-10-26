@@ -5,7 +5,7 @@
 ## 安装
 
 ```bash
-pip install fastapi-admin
+pip install fastapi-cli
 ```
 
 ## 使用方法
@@ -14,19 +14,19 @@ pip install fastapi-admin
 
 ```bash
 # 交互式创建项目
-$ fastapi-admin create-project -n myproject
+$ fastapi-cli create-project -n myproject
 
 # 创建项目并自动创建虚拟环境
-$ fastapi-admin create-project -n myproject -e
+$ fastapi-cli create-project -n myproject -e
 
 # 创建项目并指定数据库和镜像
-$ fastapi-admin create-project -n myproject -e -i tuna -d postgres,redis
+$ fastapi-cli create-project -n myproject -e -i tuna -d postgres,redis
 ```
 
 ### 创建应用模块
 
 ```bash
-$ fastapi-admin create-app myproject product_module
+$ fastapi-cli create-app myproject product_module
 ```
 
 ### 命令详解
