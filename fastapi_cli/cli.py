@@ -1433,6 +1433,9 @@ class TimerMiddleware(BaseHTTPMiddleware):
         for name, content in structure.items():
             path = base_path / name
 
+            # 确保父级目录存在
+            path.parent.mkdir(parents=True, exist_ok=True)
+
             if isinstance(content, dict):
                 # 创建目录
                 path.mkdir(parents=True, exist_ok=True)
@@ -1643,6 +1646,14 @@ def _handle_create_project(creator, args):
     project_path = creator.create_project(args.name, databases)
     if not project_path:
         return
+
+    if args.env:
+        env_path = args.env if args.env is not True else f"{args.name}_env"
+        creator.create_virtualenv(env_path)
+
+    if args.install:
+        mirror = args.install if args.install != 'default' else 'default'
+        creator.install_dependencies(project_path, mirrors=mirror)
 
 
 def _handle_create_app(creator, args):
